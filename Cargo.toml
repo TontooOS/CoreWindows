@@ -1,0 +1,30 @@
+[package]
+name = "corewindows"
+version = "26.1.0"
+edition = "2021"
+license = "TCL"
+description = "CoreWindows for TontooOS - list currently open windows with toolkit type and app icons"
+authors = ["arlomu"]
+repository = "https://github.com/TontooOS/Libs"
+readme = "README.md"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "corewindows"
+path = "src/lib.rs"
+
+[[example]]
+name = "list_windows"
+path = "examples/list_windows.rs"
+
+[[example]]
+name = "list_programs"
+path = "examples/list_programs.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

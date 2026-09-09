@@ -1,0 +1,7 @@
+{
+  "socket_missing": "Fenster-Daemon-Socket nicht gefunden",
+  "connection_failed": "Verbindung zum Fenster-Daemon fehlgeschlagen",
+  "protocol_error": "Fenster-Daemon-Protokollfehler",
+  "server_error": "Fenster-Daemon meldet einen Fehler",
+  "parse_error": "Antwort des Fenster-Daemon konnte nicht gelesen werden"
+}

@@ -1,0 +1,7 @@
+{
+  "socket_missing": "Window daemon socket not found",
+  "connection_failed": "Failed to connect to the window daemon",
+  "protocol_error": "Window daemon protocol error",
+  "server_error": "Window daemon reported an error",
+  "parse_error": "Failed to parse the window daemon reply"
+}
