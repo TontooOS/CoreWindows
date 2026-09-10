@@ -71,7 +71,7 @@ pub fn resolve_icon(
   }
 }
 
-fn icon_field(info: &serde_json::Value) -> Option<String> {
+pub(crate) fn icon_field(info: &serde_json::Value) -> Option<String> {
   let icon = info.get("icon")?;
   if let Some(path) = icon.as_str() {
     return Some(path.to_owned());

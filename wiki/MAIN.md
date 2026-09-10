@@ -57,6 +57,9 @@ See [Windows.md](Windows.md) and [Types.md](Types.md) for details.
 
 ## Changelog
 
+- 2026-09-10: Zipped `.app` files (TBuild output) are listed too
+  (`Info.tontoo` at root or under `<Name>.app/`); icons are extracted
+  once into `$TMPDIR/tontoo-corewindows-icons/<bundle-id>/`.
 - 2026-09-09: Program listing (`list_programs` over `~/Applications`
   and `/Applications` with all names, bundle path, source and icon;
   FFI, SDK, example).

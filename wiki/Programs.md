@@ -1,7 +1,9 @@
 # Programs
 
 `list_programs` scans the two applications directories for installed
-TontooOS `.app` bundles. Pure filesystem scan, no daemon needed.
+TontooOS `.app` bundles: directories with an `Info.tontoo`, and zipped
+`.app` files (TBuild output, opened by `tapp` without extraction).
+Pure filesystem scan, no daemon needed.
 
 ## Directories
 
@@ -31,7 +33,7 @@ pub struct AppEntry {
 | `bundle_id` | `String` | Bundle id from `Info.tontoo` |
 | `names` | `HashMap<String, String>` | **All** names: every locale of the `name` map; a plain string `name` becomes one `"default"` entry |
 | `display_name` | `String` | Name for the current locale (locale, `en_us`, first entry, bundle dir stem fallback) |
-| `bundle_path` | `PathBuf` | Absolute bundle directory (`....app`) |
+| `bundle_path` | `PathBuf` | Absolute bundle directory (`....app`) or zipped `.app` file |
 | `source` | `AppSource` | `User` or `System` |
 | `icon` | `AppIcon` | Resolved app icon (see [Icons.md](Icons.md)) |
 
@@ -44,8 +46,13 @@ pub fn list_programs() -> Vec<AppEntry>
 ```
 
 Lists every bundle with a readable `Info.tontoo` carrying a
-`bundle_id`. Plain files, bundles without info, invalid JSON and
-missing `bundle_id` values are skipped silently. Never fails;
+`bundle_id`. For zipped `.app` files the `Info.tontoo` entry may sit at
+the archive root or under one top-level `<Name>.app/` directory; the
+icon is extracted once into `$TMPDIR/tontoo-corewindows-icons/<bundle-id>/`
+(reused afterwards, refreshed when the bundle is newer than the cache),
+so `icon.icon_path` is always a real file. Plain files, bundles without
+info, invalid JSON, missing `bundle_id` values and non-zip `.app` files
+are skipped silently. Never fails;
 returns an empty vec when nothing is found. Results are sorted by
 display name (case-insensitive).
 
