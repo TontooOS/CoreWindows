@@ -44,12 +44,14 @@ pub struct RawWindow {
   pub app_id: Option<String>,
   pub title: Option<String>,
   pub pid: Option<i32>,
+  pub minimized: bool,
 }
 ```
 
 One raw window row as reported by the window daemon. Mirrors the daemon
 reply 1:1; all fields but `id` are optional and default to `None` when
 absent, so sparse rows like `{"id":7}` deserialize without error.
+`minimized` defaults to `false` when absent.
 
 | Field | Type | Description |
 |---|---|---|
@@ -57,6 +59,7 @@ absent, so sparse rows like `{"id":7}` deserialize without error.
 | `app_id` | `Option<String>` | XDG app id (`set_app_id`), if the client set one |
 | `title` | `Option<String>` | XDG title (`set_title`), if the client set one |
 | `pid` | `Option<i32>` | Owning client pid, if the daemon knows it |
+| `minimized` | `bool` | Whether the window is currently minimized to the dock |
 
 ## WindowInfo
 
@@ -66,6 +69,7 @@ pub struct WindowInfo {
   pub app_id: Option<String>,
   pub title: Option<String>,
   pub pid: Option<i32>,
+  pub minimized: bool,
   pub window_type: WindowType,
   pub bundle_id: Option<String>,
   pub app_name: Option<String>,
@@ -79,6 +83,7 @@ see [Windows.md](Windows.md).
 
 | Field | Type | Description |
 |---|---|---|
+| `minimized` | `bool` | Whether the window is currently minimized to the dock |
 | `window_type` | `WindowType` | Toolkit classification (see [Classification.md](Classification.md)) |
 | `bundle_id` | `Option<String>` | Bundle id from the owning `.app` `Info.tontoo`, if any |
 | `app_name` | `Option<String>` | Display name (localized bundle name, bundle dir name, title or app id) |

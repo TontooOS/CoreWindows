@@ -1,8 +1,8 @@
 # Actions
 
 Window actions change window state through the daemon (minimize,
-fullscreen, graceful close) or directly (force quit). All actions use
-the daemon window `id` from [Types.md](Types.md).
+restore, fullscreen, graceful close) or directly (force quit). All
+actions use the daemon window `id` from [Types.md](Types.md).
 
 ## Daemon actions
 
@@ -18,6 +18,17 @@ pub fn minimize_window(&self, id: u64) -> Result<()>
 
 Minimizes (iconifies) a window. The daemon hides the window, the app
 keeps running. Request: `{"id":1,"op":"minimize_window","window":5}`.
+
+### restore_window
+
+```rust
+pub fn restore_window(&self, id: u64) -> Result<()>
+```
+
+Restores a window minimized to the dock: the daemon re-maps it and drops
+its temporary dock icon (same path as clicking the dock icon).
+Request: `{"id":1,"op":"restore_window","window":5}`. Returns `Err` when
+the id is not a minimized window or its client is gone.
 
 ### set_fullscreen
 
@@ -75,6 +86,7 @@ at the crate root and over FFI / SDK.
 
 ```rust
 pub fn minimize_window(id: u64) -> Result<()>
+pub fn restore_window(id: u64) -> Result<()>
 pub fn set_fullscreen(id: u64, fullscreen: bool) -> Result<()>
 pub fn close_window(id: u64) -> Result<()>
 pub fn force_quit_window(id: u64) -> Result<()>

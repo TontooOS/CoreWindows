@@ -53,6 +53,9 @@ pub struct RawWindow {
   /// Owning client pid, if the daemon knows it.
   #[serde(default)]
   pub pid: Option<i32>,
+  /// Whether the window is currently minimized to the dock.
+  #[serde(default)]
+  pub minimized: bool,
 }
 
 /// A fully classified open window: raw daemon data plus toolkit type,
@@ -70,6 +73,9 @@ pub struct WindowInfo {
   /// Owning client pid, if the daemon knows it.
   #[serde(default)]
   pub pid: Option<i32>,
+  /// Whether the window is currently minimized to the dock.
+  #[serde(default)]
+  pub minimized: bool,
   /// Toolkit classification (see [`WindowType`]).
   pub window_type: WindowType,
   /// Bundle id from the owning `.app` `Info.tontoo`, if any.
@@ -103,5 +109,13 @@ mod tests {
     assert!(raw.app_id.is_none());
     assert!(raw.title.is_none());
     assert!(raw.pid.is_none());
+    assert!(!raw.minimized);
+  }
+
+  #[test]
+  fn raw_window_minimized_flag() {
+    let raw: RawWindow =
+      serde_json::from_str(r#"{"id":3,"minimized":true}"#).unwrap();
+    assert!(raw.minimized);
   }
 }

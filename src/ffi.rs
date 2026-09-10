@@ -98,6 +98,20 @@ pub unsafe extern "C" fn tontoo_corewindows_minimize_window(
   action_code(provider_for(socket_path).minimize_window(id))
 }
 
+/// Restore a window minimized to the dock. Returns 0 on success, -1 on
+/// error (unknown id, not minimized, or client gone).
+///
+/// # Safety
+///
+/// `socket_path` must be NUL-terminated or null (default socket).
+#[no_mangle]
+pub unsafe extern "C" fn tontoo_corewindows_restore_window(
+  socket_path: *const c_char,
+  id: u64,
+) -> i32 {
+  action_code(provider_for(socket_path).restore_window(id))
+}
+
 /// Set fullscreen state of a window (`fullscreen` != 0 = fullscreen like
 /// the green UIKit traffic light, 0 = windowed). Returns 0 on success,
 /// -1 on error.

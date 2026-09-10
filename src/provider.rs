@@ -103,6 +103,7 @@ impl WindowsProvider {
             app_id: raw.app_id.clone(),
             title: raw.title.clone(),
             pid: raw.pid,
+            minimized: raw.minimized,
             window_type: c.window_type,
             bundle_id: c.bundle_id,
             app_name: c.app_name,
@@ -121,6 +122,14 @@ impl WindowsProvider {
   /// keeps running.
   pub fn minimize_window(&self, id: u64) -> Result<()> {
     self.request_with("minimize_window", serde_json::json!({"window": id}))?;
+    Ok(())
+  }
+
+  /// Restore a window minimized to the dock. The daemon re-maps the window
+  /// and drops its temporary dock icon. Returns `Err` when the id is not a
+  /// minimized window or its client is gone.
+  pub fn restore_window(&self, id: u64) -> Result<()> {
+    self.request_with("restore_window", serde_json::json!({"window": id}))?;
     Ok(())
   }
 
@@ -285,21 +294,24 @@ mod tests {
 
   #[test]
   fn actions_send_expected_frames() {
-    let (path, server) = fake_daemon("actions", 4, serde_json::json!([]));
+    let (path, server) = fake_daemon("actions", 5, serde_json::json!([]));
     let provider = WindowsProvider::with_socket(&path);
     provider.minimize_window(5).unwrap();
+    provider.restore_window(5).unwrap();
     provider.set_fullscreen(5, true).unwrap();
     provider.unfullscreen_window(5).unwrap();
     provider.close_window(5).unwrap();
     drop(provider);
     let seen = server.join().unwrap();
-    assert_eq!(seen.len(), 4);
+    assert_eq!(seen.len(), 5);
     assert_eq!(frame(&seen, 0)["op"], serde_json::json!("minimize_window"));
     assert_eq!(frame(&seen, 0)["window"], serde_json::json!(5));
-    assert_eq!(frame(&seen, 1)["op"], serde_json::json!("set_fullscreen"));
-    assert_eq!(frame(&seen, 1)["fullscreen"], serde_json::json!(true));
-    assert_eq!(frame(&seen, 2)["fullscreen"], serde_json::json!(false));
-    assert_eq!(frame(&seen, 3)["op"], serde_json::json!("close_window"));
+    assert_eq!(frame(&seen, 1)["op"], serde_json::json!("restore_window"));
+    assert_eq!(frame(&seen, 1)["window"], serde_json::json!(5));
+    assert_eq!(frame(&seen, 2)["op"], serde_json::json!("set_fullscreen"));
+    assert_eq!(frame(&seen, 2)["fullscreen"], serde_json::json!(true));
+    assert_eq!(frame(&seen, 3)["fullscreen"], serde_json::json!(false));
+    assert_eq!(frame(&seen, 4)["op"], serde_json::json!("close_window"));
     let _ = std::fs::remove_file(&path);
   }
 

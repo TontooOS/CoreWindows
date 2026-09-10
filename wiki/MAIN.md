@@ -57,6 +57,9 @@ See [Windows.md](Windows.md) and [Types.md](Types.md) for details.
 
 ## Changelog
 
+- 2026-09-10: Window restore (`restore_window` on provider, crate root,
+  FFI and SDK) plus `minimized` flag on `RawWindow`/`WindowInfo` and
+  daemon rows.
 - 2026-09-10: Zipped `.app` files (TBuild output) are listed too
   (`Info.tontoo` at root or under `<Name>.app/`); icons are extracted
   once into `$TMPDIR/tontoo-corewindows-icons/<bundle-id>/`.

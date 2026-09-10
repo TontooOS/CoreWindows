@@ -73,6 +73,19 @@ Minimizes (iconifies) a window, the app keeps running.
 | `0` | Minimized |
 | `-1` | Error (daemon missing, unreachable, or refused) |
 
+### tontoo_corewindows_restore_window
+
+```c
+int tontoo_corewindows_restore_window(const char *socket_path, uint64_t id);
+```
+
+Restores a window minimized to the dock.
+
+| Return | Meaning |
+|---|---|
+| `0` | Restored |
+| `-1` | Error (unknown id, not minimized, client gone, or daemon refused) |
+
 ### tontoo_corewindows_set_fullscreen
 
 ```c

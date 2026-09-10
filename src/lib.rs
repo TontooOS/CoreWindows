@@ -39,6 +39,11 @@ pub fn minimize_window(id: u64) -> Result<()> {
   WindowsProvider::new().minimize_window(id)
 }
 
+/// Restore a window minimized to the dock at the default socket.
+pub fn restore_window(id: u64) -> Result<()> {
+  WindowsProvider::new().restore_window(id)
+}
+
 /// Set fullscreen state of a window at the default socket.
 pub fn set_fullscreen(id: u64, fullscreen: bool) -> Result<()> {
   WindowsProvider::new().set_fullscreen(id, fullscreen)

@@ -22,6 +22,7 @@ The daemon side (TontooCompositor) implements these ops. Requests:
 {"id": 1, "op": "ping"}
 {"id": 1, "op": "list_windows"}
 {"id": 1, "op": "minimize_window", "window": 5}
+{"id": 1, "op": "restore_window", "window": 5}
 {"id": 1, "op": "set_fullscreen", "window": 5, "fullscreen": true}
 {"id": 1, "op": "close_window", "window": 5}
 ```
@@ -29,8 +30,9 @@ The daemon side (TontooCompositor) implements these ops. Requests:
 | Op | Effect (daemon side) |
 |---|---|
 | `ping` | Answer `{"pong": true}` |
-| `list_windows` | Answer `{"windows": [...]}` (see below) |
+| `list_windows` | Answer `{"windows": [...]}` (see below; minimized rows carry `"minimized": true`) |
 | `minimize_window` | Iconify the window, app keeps running |
+| `restore_window` | Re-map a minimized window and drop its temp dock icon |
 | `set_fullscreen` | Fullscreen (`true`) or unfullscreen (`false`) the window |
 | `close_window` | Ask the client to close (`xdg_toplevel.close` / `WM_DELETE_WINDOW`) |
 

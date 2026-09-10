@@ -2,8 +2,8 @@
 #define TONTOO_COREWINDOWS_H
 
 /* CoreWindows C API: list currently open windows with toolkit type and
- * app icons, plus window actions (minimize, fullscreen, close, force quit).
- * All strings returned by this library must be released with
+ * app icons, plus window actions (minimize, restore, fullscreen, close,
+ * force quit). All strings returned by this library must be released with
  * tontoo_corewindows_string_free().
  */
 
@@ -29,6 +29,10 @@ char *tontoo_corewindows_list_windows(const char *socket_path);
 
 /* Minimize a window (iconify). Returns 0 on success, -1 on error. */
 int tontoo_corewindows_minimize_window(const char *socket_path, uint64_t id);
+
+/* Restore a window minimized to the dock. Returns 0 on success, -1 on
+ * error (unknown id, not minimized, or client gone). */
+int tontoo_corewindows_restore_window(const char *socket_path, uint64_t id);
 
 /* Set fullscreen state (nonzero = fullscreen like the green UIKit traffic
  * light, 0 = windowed). Returns 0 on success, -1 on error. */

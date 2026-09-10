@@ -211,6 +211,7 @@ mod tests {
       app_id: app_id.map(str::to_owned),
       title: title.map(str::to_owned),
       pid,
+      minimized: false,
     }
   }
 
