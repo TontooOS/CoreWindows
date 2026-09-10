@@ -10,8 +10,8 @@ pub use classify::{classify, Classification};
 pub use error::{Result, WindowsError};
 pub use icon::{resolve_icon, AppIcon};
 pub use programs::{
-  list_programs, program_dirs, scan_dir, AppEntry, AppSource, SYSTEM_APPLICATIONS_DIR,
-  USER_APPLICATIONS_DIR,
+  all_names, list_programs, program_dirs, scan_dir, AppEntry, AppSource,
+  SYSTEM_APPLICATIONS_DIR, USER_APPLICATIONS_DIR,
 };
 pub use provider::{force_quit_pid, WindowsProvider, DEFAULT_SOCKET_PATH};
 pub use types::{RawWindow, WindowInfo, WindowType};
@@ -65,12 +65,15 @@ pub mod prelude {
   pub use crate::error::{Result, WindowsError};
   pub use crate::icon::{resolve_icon, AppIcon};
   pub use crate::programs::{
-    list_programs, program_dirs, scan_dir, AppEntry, AppSource, SYSTEM_APPLICATIONS_DIR,
-    USER_APPLICATIONS_DIR,
+    all_names, list_programs, program_dirs, scan_dir, AppEntry, AppSource,
+    SYSTEM_APPLICATIONS_DIR, USER_APPLICATIONS_DIR,
   };
   pub use crate::provider::{force_quit_pid, WindowsProvider, DEFAULT_SOCKET_PATH};
   pub use crate::types::{RawWindow, WindowInfo, WindowType};
-  pub use crate::{ping, windows, COREWINDOWS_VERSION};
+  pub use crate::{
+    close_window, force_quit_window, list_raw, minimize_window, ping, restore_window,
+    set_fullscreen, windows, COREWINDOWS_VERSION,
+  };
 }
 
 mod ffi;
