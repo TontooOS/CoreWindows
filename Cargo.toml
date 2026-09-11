@@ -9,7 +9,7 @@ repository = "https://github.com/TontooOS/Libs"
 readme = "README.md"
 
 [lib]
-crate-type = ["dylib"]
+crate-type = ["cdylib", "rlib"]
 name = "corewindows"
 path = "src/lib.rs"
 
