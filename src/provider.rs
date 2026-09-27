@@ -364,18 +364,12 @@ mod tests {
   }
 }
 
-/// Force quit a process id: sends `SIGKILL` immediately.
+/// Force quit a process id: sends `SIGKILL` immediately via Foundation.
 ///
 /// No save dialog can appear, unsaved work is lost. This is the macOS
 /// Force Quit equivalent. Returns `Err` when the signal fails (e.g.
 /// unknown pid or insufficient permission).
 pub fn force_quit_pid(pid: i32) -> Result<()> {
-  let rc = unsafe { libc::kill(pid, libc::SIGKILL) };
-  if rc == 0 {
-    Ok(())
-  } else {
-    Err(WindowsError::Connection(
-      std::io::Error::last_os_error().to_string(),
-    ))
-  }
+  foundation::process::terminate_process(pid)
+    .map_err(|e| WindowsError::Connection(e.to_string()))
 }

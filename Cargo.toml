@@ -23,7 +23,6 @@ path = "examples/list_programs.rs"
 
 [dependencies]
 foundation = { path = "../Foundation" }
-libc = "0.2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
