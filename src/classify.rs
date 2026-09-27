@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::types::{RawWindow, WindowType};
+use foundation::serialization::JsonDocument;
 
 /// Environment variable every TontooOS UI toolkit sets with its own id
 /// (`UIKit`, `TontooUI`). UIKit sets it in `App::run` (see
@@ -40,7 +41,7 @@ pub struct Classification {
   /// Owning `.app` bundle directory, if the process runs from one.
   pub bundle_dir: Option<PathBuf>,
   /// Parsed `Info.tontoo` of the owning bundle, if any.
-  pub bundle_info: Option<serde_json::Value>,
+  pub bundle_info: Option<JsonDocument>,
 }
 
 /// Classify one raw window row.
@@ -56,7 +57,7 @@ pub struct Classification {
 pub fn classify(raw: &RawWindow) -> Classification {
   let mut window_type: Option<WindowType> = None;
   let mut bundle_dir: Option<PathBuf> = None;
-  let mut bundle_info: Option<serde_json::Value> = None;
+  let mut bundle_info: Option<JsonDocument> = None;
 
   if let Some(pid) = raw.pid {
     if window_type.is_none() {
@@ -71,17 +72,16 @@ pub fn classify(raw: &RawWindow) -> Classification {
   if window_type.is_none() {
     if let Some(info) = bundle_info.as_ref() {
       window_type = info
-        .get("toolkit")
-        .and_then(|v| v.as_str())
+        .str_field("toolkit")
+        .unwrap_or(None)
+        .as_deref()
         .and_then(normalize_toolkit);
     }
   }
 
   let bundle_id = bundle_info
     .as_ref()
-    .and_then(|info| info.get("bundle_id"))
-    .and_then(|v| v.as_str())
-    .map(str::to_owned);
+    .and_then(|info| info.str_field("bundle_id").unwrap_or(None));
 
   if window_type.is_none() {
     if let Some(id) = bundle_id.as_deref() {
@@ -119,7 +119,7 @@ pub fn classify(raw: &RawWindow) -> Classification {
 fn app_name_for(
   raw: &RawWindow,
   bundle_dir: Option<&Path>,
-  info: Option<&serde_json::Value>,
+  info: Option<&JsonDocument>,
 ) -> Option<String> {
   if let Some(info) = info {
     if let Some(name) = localized_name(info) {
@@ -139,20 +139,26 @@ fn app_name_for(
 
 /// Localized bundle display name: `name` is either a plain string or a
 /// locale map (`{"en_us": ..., "de_de": ...}`), resolved with the same
-/// fallback chain as FishPerms (`current locale`, `en_us`, first entry).
-pub fn localized_name(info: &serde_json::Value) -> Option<String> {
-  let name = info.get("name")?;
-  if let Some(text) = name.as_str() {
-    return Some(text.to_owned());
+/// fallback chain as FishPerms (`current locale`, `en_us`, first entry
+/// in sorted key order).
+pub fn localized_name(info: &JsonDocument) -> Option<String> {
+  if let Some(text) = info.str_field("name").unwrap_or(None) {
+    return Some(text);
   }
-  let names = name.as_object()?;
+  let names = info.string_map_field("name").unwrap_or_default();
+  if names.is_empty() {
+    return None;
+  }
   let locale = crate::lang::current_locale();
-  names
-    .get(locale)
-    .or_else(|| names.get("en_us"))
-    .or_else(|| names.values().next())
-    .and_then(|v| v.as_str())
-    .map(str::to_owned)
+  if let Some(text) = names.get(locale) {
+    return Some(text.clone());
+  }
+  if let Some(text) = names.get("en_us") {
+    return Some(text.clone());
+  }
+  let mut keys: Vec<&String> = names.keys().collect();
+  keys.sort();
+  keys.first().and_then(|k| names.get(*k)).cloned()
 }
 
 /// Toolkit marker of a process from `/proc/<pid>/environ`.
@@ -170,12 +176,12 @@ pub fn toolkit_of_pid(pid: i32) -> Option<WindowType> {
 /// Owning `.app` bundle of a process: nearest ancestor directory ending in
 /// `.app` (or the binary itself when named `*.app`), plus its parsed
 /// `Info.tontoo`. Returns `None` for plain binaries and unreadable info.
-pub fn bundle_of_pid(pid: i32) -> Option<(PathBuf, serde_json::Value)> {
+pub fn bundle_of_pid(pid: i32) -> Option<(PathBuf, JsonDocument)> {
   let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
   let exe_path = exe.canonicalize().ok()?;
   let bundle_dir = find_bundle_dir(&exe_path)?;
   let info_text = std::fs::read_to_string(bundle_dir.join("Info.tontoo")).ok()?;
-  let info: serde_json::Value = serde_json::from_str(&info_text).ok()?;
+  let info = JsonDocument::parse(&info_text).ok()?;
   Some((bundle_dir, info))
 }
 
@@ -248,15 +254,15 @@ mod tests {
 
   #[test]
   fn localized_name_prefers_current_locale() {
-    let info: serde_json::Value =
-      serde_json::from_str(r#"{"name":{"en_us":"Finder","de_de":"FinderDE"}}"#).unwrap();
+    let info =
+      JsonDocument::parse(r#"{"name":{"en_us":"Finder","de_de":"FinderDE"}}"#).unwrap();
     let name = localized_name(&info).unwrap();
     assert!(name == "Finder" || name == "FinderDE");
   }
 
   #[test]
   fn localized_name_plain_string() {
-    let info: serde_json::Value = serde_json::from_str(r#"{"name":"Terminal"}"#).unwrap();
+    let info = JsonDocument::parse(r#"{"name":"Terminal"}"#).unwrap();
     assert_eq!(localized_name(&info).as_deref(), Some("Terminal"));
   }
 

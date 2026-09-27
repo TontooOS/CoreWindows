@@ -42,7 +42,7 @@ pub struct Classification {
   pub bundle_id: Option<String>,
   pub app_name: Option<String>,
   pub bundle_dir: Option<PathBuf>,
-  pub bundle_info: Option<serde_json::Value>,
+  pub bundle_info: Option<JsonDocument>,
 }
 ```
 
@@ -52,7 +52,7 @@ pub struct Classification {
 | `bundle_id` | `Option<String>` | `bundle_id` from `Info.tontoo`, if any |
 | `app_name` | `Option<String>` | Localized bundle name, bundle dir stem, title or app id |
 | `bundle_dir` | `Option<PathBuf>` | Owning `.app` bundle directory, if any |
-| `bundle_info` | `Option<Value>` | Parsed `Info.tontoo`, if any |
+| `bundle_info` | `Option<JsonDocument>` | Parsed `Info.tontoo`, if any |
 
 ## Helpers
 
@@ -68,7 +68,7 @@ Returns `None` when the process is gone, unreadable or unmarked.
 ### bundle_of_pid
 
 ```rust
-pub fn bundle_of_pid(pid: i32) -> Option<(PathBuf, serde_json::Value)>
+  pub fn bundle_of_pid(pid: i32) -> Option<(PathBuf, JsonDocument)>
 ```
 
 Finds the owning `.app` bundle of a process (nearest ancestor directory
@@ -79,7 +79,7 @@ files and invalid JSON.
 ### localized_name
 
 ```rust
-pub fn localized_name(info: &serde_json::Value) -> Option<String>
+  pub fn localized_name(info: &JsonDocument) -> Option<String>
 ```
 
 Bundle display name: `name` is either a plain string or a locale map

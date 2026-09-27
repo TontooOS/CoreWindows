@@ -7,6 +7,7 @@ use crate::classify::classify;
 use crate::error::{Result, WindowsError};
 use crate::icon::resolve_icon;
 use crate::types::{RawWindow, WindowInfo};
+use foundation::serialization::{JsonDocument, JsonObject};
 
 /// Default window daemon socket path (mirrors the daemon default).
 pub const DEFAULT_SOCKET_PATH: &str = "/run/tontoo-windows.sock";
@@ -61,20 +62,25 @@ impl WindowsProvider {
   /// Ping the daemon. Returns `true` on a valid pong reply.
   pub fn ping(&self) -> Result<bool> {
     let result = self.request("ping")?;
-    Ok(result.get("pong").and_then(|v| v.as_bool()).unwrap_or(false))
+    result
+      .bool_field("pong")
+      .map(|v| v.unwrap_or(false))
+      .map_err(|e| WindowsError::Protocol(e.to_string()))
   }
 
   /// Raw window rows from the daemon, no classification or icon lookup.
   pub fn list_raw(&self) -> Result<Vec<RawWindow>> {
     let result = self.request("list_windows")?;
+    if !result.has("windows") {
+      return Err(WindowsError::Parse("reply has no windows array".to_owned()));
+    }
     let windows = result
-      .get("windows")
-      .and_then(|v| v.as_array())
-      .ok_or_else(|| WindowsError::Parse("reply has no windows array".to_owned()))?;
+      .array_field("windows")
+      .map_err(|e| WindowsError::Protocol(e.to_string()))?;
     windows
       .iter()
       .map(|w| {
-        serde_json::from_value(w.clone())
+        RawWindow::from_document(w)
           .map_err(|e| WindowsError::Parse(format!("bad window row: {e}")))
       })
       .collect()
@@ -114,14 +120,20 @@ impl WindowsProvider {
     )
   }
 
-  fn request(&self, op: &str) -> Result<serde_json::Value> {
-    self.request_with(op, serde_json::json!({}))
+  fn request(&self, op: &str) -> Result<JsonDocument> {
+    self.request_with(op, &JsonObject::new())
+  }
+
+  fn window_params(id: u64) -> JsonObject {
+    let mut params = JsonObject::new();
+    params.field_u64("window", id);
+    params
   }
 
   /// Minimize a window (iconify). The daemon hides the window, the app
   /// keeps running.
   pub fn minimize_window(&self, id: u64) -> Result<()> {
-    self.request_with("minimize_window", serde_json::json!({"window": id}))?;
+    self.request_with("minimize_window", &Self::window_params(id))?;
     Ok(())
   }
 
@@ -129,17 +141,16 @@ impl WindowsProvider {
   /// and drops its temporary dock icon. Returns `Err` when the id is not a
   /// minimized window or its client is gone.
   pub fn restore_window(&self, id: u64) -> Result<()> {
-    self.request_with("restore_window", serde_json::json!({"window": id}))?;
+    self.request_with("restore_window", &Self::window_params(id))?;
     Ok(())
   }
 
   /// Set fullscreen state of a window (`true` = fullscreen like the green
   /// UIKit traffic light / F11, `false` = back to windowed).
   pub fn set_fullscreen(&self, id: u64, fullscreen: bool) -> Result<()> {
-    self.request_with(
-      "set_fullscreen",
-      serde_json::json!({"window": id, "fullscreen": fullscreen}),
-    )?;
+    let mut params = Self::window_params(id);
+    params.field_bool("fullscreen", fullscreen);
+    self.request_with("set_fullscreen", &params)?;
     Ok(())
   }
 
@@ -158,7 +169,7 @@ impl WindowsProvider {
   /// The app itself decides what happens next, e.g. LibreOffice shows
   /// its save dialog for unsaved documents. Nothing is killed.
   pub fn close_window(&self, id: u64) -> Result<()> {
-    self.request_with("close_window", serde_json::json!({"window": id}))?;
+    self.request_with("close_window", &Self::window_params(id))?;
     Ok(())
   }
 
@@ -178,7 +189,7 @@ impl WindowsProvider {
     force_quit_pid(pid)
   }
 
-  fn request_with(&self, op: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+  fn request_with(&self, op: &str, params: &JsonObject) -> Result<JsonDocument> {
     if !self.socket_path.exists() {
       return Err(WindowsError::SocketMissing(
         self.socket_path.to_string_lossy().into_owned(),
@@ -194,13 +205,16 @@ impl WindowsProvider {
       .map_err(|e| WindowsError::Connection(e.to_string()))?;
     let mut reader = BufReader::new(stream);
 
-    let mut frame = serde_json::json!({"id": 1, "op": op});
-    if let (Some(map), Some(extra)) = (frame.as_object_mut(), params.as_object()) {
-      for (k, v) in extra {
-        map.insert(k.clone(), v.clone());
-      }
-    }
-    let line = frame.to_string() + "\n";
+    let mut frame = JsonObject::new();
+    frame
+      .field_f64("id", 1.0)
+      .map_err(|e| WindowsError::Protocol(e.to_string()))?;
+    frame.field_str("op", op);
+    frame.extend(params);
+    let line = frame
+      .build(false)
+      .map_err(|e| WindowsError::Protocol(e.to_string()))?
+      + "\n";
     writer
       .write_all(line.as_bytes())
       .and_then(|_| writer.flush())
@@ -210,17 +224,25 @@ impl WindowsProvider {
     reader
       .read_line(&mut reply)
       .map_err(|e| WindowsError::Connection(e.to_string()))?;
-    let frame: serde_json::Value =
-      serde_json::from_str(&reply).map_err(|e| WindowsError::Protocol(e.to_string()))?;
-    if frame.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
-      Ok(frame.get("result").cloned().unwrap_or(serde_json::Value::Null))
+    let frame =
+      JsonDocument::parse(&reply).map_err(|e| WindowsError::Protocol(e.to_string()))?;
+    let ok = frame
+      .bool_field("ok")
+      .map_err(|e| WindowsError::Protocol(e.to_string()))?
+      .unwrap_or(false);
+    if ok {
+      Ok(
+        frame
+          .nested("result")
+          .map_err(|e| WindowsError::Protocol(e.to_string()))?
+          .unwrap_or_else(JsonDocument::empty),
+      )
     } else {
       Err(WindowsError::Server(
         frame
-          .get("error")
-          .and_then(|v| v.as_str())
-          .unwrap_or("unknown error")
-          .to_string(),
+          .str_field("error")
+          .map_err(|e| WindowsError::Protocol(e.to_string()))?
+          .unwrap_or_else(|| "unknown error".to_string()),
       ))
     }
   }
@@ -248,18 +270,19 @@ mod tests {
   }
 
   /// Fake daemon: answers `expect` requests with `{"ok":true,...}` and
-  /// returns the raw request lines. `windows` controls the
-  /// `list_windows` payload.
+  /// returns the raw request lines. `windows_json` is the raw JSON array
+  /// controlling the `list_windows` payload.
   fn fake_daemon(
     name: &str,
     expect: usize,
-    windows: serde_json::Value,
+    windows_json: &str,
   ) -> (PathBuf, std::thread::JoinHandle<Vec<String>>) {
     let dir = std::env::temp_dir().join(format!("corewindows-test-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join(format!("{name}.sock"));
     let _ = std::fs::remove_file(&path);
     let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let windows_json = windows_json.to_owned();
     let handle = std::thread::spawn(move || {
       let mut seen = Vec::new();
       for stream in listener.incoming().take(expect) {
@@ -273,13 +296,17 @@ mod tests {
           break;
         }
         seen.push(line.trim().to_owned());
-        let req: serde_json::Value = serde_json::from_str(seen.last().unwrap()).unwrap();
-        let result = match req.get("op").and_then(|v| v.as_str()) {
-          Some("ping") => serde_json::json!({"pong": true}),
-          Some("list_windows") => serde_json::json!({"windows": windows}),
-          _ => serde_json::Value::Null,
+        let req = JsonDocument::parse(seen.last().unwrap()).unwrap();
+        let op = req.str_field("op").unwrap();
+        let result_json = match op.as_deref() {
+          Some("ping") => r#"{"pong": true}"#.to_owned(),
+          Some("list_windows") => format!(r#"{{"windows": {}}}"#, windows_json),
+          _ => "null".to_owned(),
         };
-        let reply = serde_json::json!({"ok": true, "result": result}).to_string() + "\n";
+        let mut reply = JsonObject::new();
+        reply.field_bool("ok", true);
+        reply.field_raw("result", &result_json).unwrap();
+        let reply = reply.build(false).unwrap() + "\n";
         use std::io::Write as _;
         let _ = (&stream).write_all(reply.as_bytes());
       }
@@ -288,13 +315,13 @@ mod tests {
     (path, handle)
   }
 
-  fn frame(lines: &[String], i: usize) -> serde_json::Value {
-    serde_json::from_str(&lines[i]).unwrap()
+  fn frame(lines: &[String], i: usize) -> JsonDocument {
+    JsonDocument::parse(&lines[i]).unwrap()
   }
 
   #[test]
   fn actions_send_expected_frames() {
-    let (path, server) = fake_daemon("actions", 5, serde_json::json!([]));
+    let (path, server) = fake_daemon("actions", 5, "[]");
     let provider = WindowsProvider::with_socket(&path);
     provider.minimize_window(5).unwrap();
     provider.restore_window(5).unwrap();
@@ -304,21 +331,21 @@ mod tests {
     drop(provider);
     let seen = server.join().unwrap();
     assert_eq!(seen.len(), 5);
-    assert_eq!(frame(&seen, 0)["op"], serde_json::json!("minimize_window"));
-    assert_eq!(frame(&seen, 0)["window"], serde_json::json!(5));
-    assert_eq!(frame(&seen, 1)["op"], serde_json::json!("restore_window"));
-    assert_eq!(frame(&seen, 1)["window"], serde_json::json!(5));
-    assert_eq!(frame(&seen, 2)["op"], serde_json::json!("set_fullscreen"));
-    assert_eq!(frame(&seen, 2)["fullscreen"], serde_json::json!(true));
-    assert_eq!(frame(&seen, 3)["fullscreen"], serde_json::json!(false));
-    assert_eq!(frame(&seen, 4)["op"], serde_json::json!("close_window"));
+    assert_eq!(frame(&seen, 0).str_field("op").unwrap().as_deref(), Some("minimize_window"));
+    assert_eq!(frame(&seen, 0).u64_field("window").unwrap(), Some(5));
+    assert_eq!(frame(&seen, 1).str_field("op").unwrap().as_deref(), Some("restore_window"));
+    assert_eq!(frame(&seen, 1).u64_field("window").unwrap(), Some(5));
+    assert_eq!(frame(&seen, 2).str_field("op").unwrap().as_deref(), Some("set_fullscreen"));
+    assert_eq!(frame(&seen, 2).bool_field("fullscreen").unwrap(), Some(true));
+    assert_eq!(frame(&seen, 3).bool_field("fullscreen").unwrap(), Some(false));
+    assert_eq!(frame(&seen, 4).str_field("op").unwrap().as_deref(), Some("close_window"));
     let _ = std::fs::remove_file(&path);
   }
 
   #[test]
   fn force_quit_unknown_window_errors() {
     let (path, server) =
-      fake_daemon("forcequit", 2, serde_json::json!([{"id": 1, "app_id": "x", "pid": null}]));
+      fake_daemon("forcequit", 2, r#"[{"id": 1, "app_id": "x", "pid": null}]"#);
     let provider = WindowsProvider::with_socket(&path);
     let err = provider.force_quit_window(99).unwrap_err();
     assert!(matches!(err, WindowsError::Parse(_)));

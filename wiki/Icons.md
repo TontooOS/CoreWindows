@@ -48,7 +48,7 @@ pub fn resolve_icon(
   bundle_dir: &Path,
   bundle_id: &str,
   app_name: &str,
-  info: Option<&serde_json::Value>,
+  info: Option<&JsonDocument>,
 ) -> AppIcon
 ```
 

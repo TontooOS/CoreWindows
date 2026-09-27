@@ -3,6 +3,76 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
+use foundation::serialization::{JsonObject, JSONSerialization};
+
+fn opt_str(obj: &mut JsonObject, key: &str, value: Option<&str>) {
+  match value {
+    Some(text) => {
+      obj.field_str(key, text);
+    }
+    None => {
+      obj.field_null(key);
+    }
+  }
+}
+
+fn icon_json(icon: &crate::icon::AppIcon) -> String {
+  let mut obj = JsonObject::new();
+  obj.field_str("bundle_id", &icon.bundle_id);
+  obj.field_str("bundle_path", &icon.bundle_path.to_string_lossy());
+  match &icon.icon_path {
+    Some(path) => obj.field_str("icon_path", &path.to_string_lossy()),
+    None => obj.field_null("icon_path"),
+  };
+  obj.field_str("app_name", &icon.app_name);
+  obj.build(false).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn window_json(window: &crate::types::WindowInfo) -> String {
+  let mut obj = JsonObject::new();
+  obj.field_u64("id", window.id);
+  opt_str(&mut obj, "app_id", window.app_id.as_deref());
+  opt_str(&mut obj, "title", window.title.as_deref());
+  match window.pid {
+    Some(pid) => {
+      obj.field_i64("pid", pid as i64);
+    }
+    None => {
+      obj.field_null("pid");
+    }
+  }
+  obj.field_bool("minimized", window.minimized);
+  obj.field_str("window_type", window.window_type.snake_str());
+  opt_str(&mut obj, "bundle_id", window.bundle_id.as_deref());
+  opt_str(&mut obj, "app_name", window.app_name.as_deref());
+  match &window.icon {
+    Some(icon) => {
+      let _ = obj.field_raw("icon", &icon_json(icon));
+    }
+    None => {
+      obj.field_null("icon");
+    }
+  }
+  obj.build(false).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn app_entry_json(entry: &crate::programs::AppEntry) -> String {
+  let mut obj = JsonObject::new();
+  obj.field_str("bundle_id", &entry.bundle_id);
+  let names_json =
+    JSONSerialization::stringify_string_map(&entry.names, false).unwrap_or_else(|_| "{}".to_string());
+  let _ = obj.field_raw("names", &names_json);
+  obj.field_str("display_name", &entry.display_name);
+  obj.field_str("bundle_path", &entry.bundle_path.to_string_lossy());
+  obj.field_str("source", entry.source.snake_str());
+  let _ = obj.field_raw("icon", &icon_json(&entry.icon));
+  obj.build(false).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn json_array(items: &[String]) -> String {
+  format!("[{}]", items.join(","))
+}
+
 unsafe fn read_str(ptr: *const c_char) -> Option<String> {
   if ptr.is_null() {
     return None;
@@ -51,10 +121,10 @@ pub unsafe extern "C" fn tontoo_corewindows_list_windows(
     _ => crate::WindowsProvider::from_env(),
   };
   match provider.windows() {
-    Ok(windows) => match serde_json::to_string(&windows) {
-      Ok(json) => CString::new(json).unwrap_or_default().into_raw(),
-      Err(_) => std::ptr::null_mut(),
-    },
+    Ok(windows) => {
+      let items: Vec<String> = windows.iter().map(window_json).collect();
+      CString::new(json_array(&items)).unwrap_or_default().into_raw()
+    }
     Err(_) => std::ptr::null_mut(),
   }
 }
@@ -175,8 +245,93 @@ pub extern "C" fn tontoo_corewindows_force_quit_pid(pid: i32) -> i32 {
 /// found. Free the string with [`tontoo_corewindows_string_free`].
 #[no_mangle]
 pub extern "C" fn tontoo_corewindows_list_programs() -> *mut c_char {
-  match serde_json::to_string(&crate::list_programs()) {
-    Ok(json) => CString::new(json).unwrap_or_default().into_raw(),
-    Err(_) => std::ptr::null_mut(),
+  let programs = crate::list_programs();
+  let items: Vec<String> = programs.iter().map(app_entry_json).collect();
+  CString::new(json_array(&items)).unwrap_or_default().into_raw()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use foundation::serialization::JsonDocument;
+
+  fn sample_window() -> crate::types::WindowInfo {
+    crate::types::WindowInfo {
+      id: 7,
+      app_id: Some("org.test.app".to_owned()),
+      title: Some("Test \"quoted\"".to_owned()),
+      pid: Some(4242),
+      minimized: true,
+      window_type: crate::types::WindowType::TontooUi,
+      bundle_id: None,
+      app_name: Some("TestApp".to_owned()),
+      icon: Some(crate::icon::AppIcon {
+        bundle_id: "com.tontoo.test".to_owned(),
+        bundle_path: std::path::PathBuf::from("/Applications/Test.app"),
+        icon_path: None,
+        app_name: "TestApp".to_owned(),
+      }),
+    }
+  }
+
+  #[test]
+  fn window_json_roundtrip_matches_serde_shape() {
+    let json = window_json(&sample_window());
+    let doc = JsonDocument::parse(&json).unwrap();
+    assert_eq!(doc.u64_field("id").unwrap(), Some(7));
+    assert_eq!(
+      doc.str_field("app_id").unwrap().as_deref(),
+      Some("org.test.app")
+    );
+    assert_eq!(
+      doc.str_field("title").unwrap().as_deref(),
+      Some("Test \"quoted\"")
+    );
+    assert_eq!(
+      doc.str_field("window_type").unwrap().as_deref(),
+      Some("tontoui")
+    );
+    assert_eq!(doc.bool_field("minimized").unwrap(), Some(true));
+    assert!(doc.nested("bundle_id").unwrap().is_none());
+    let icon = doc.nested("icon").unwrap().expect("icon object");
+    assert_eq!(
+      icon.str_field("bundle_id").unwrap().as_deref(),
+      Some("com.tontoo.test")
+    );
+    assert!(icon.nested("icon_path").unwrap().is_none());
+  }
+
+  #[test]
+  fn app_entry_json_roundtrip() {
+    let entry = crate::programs::AppEntry {
+      bundle_id: "com.tontoo.demo".to_owned(),
+      names: [("en_us".to_owned(), "Demo".to_owned())].into_iter().collect(),
+      display_name: "Demo".to_owned(),
+      bundle_path: std::path::PathBuf::from("/Applications/Demo.app"),
+      source: crate::programs::AppSource::System,
+      icon: crate::icon::AppIcon {
+        bundle_id: "com.tontoo.demo".to_owned(),
+        bundle_path: std::path::PathBuf::from("/Applications/Demo.app"),
+        icon_path: Some(std::path::PathBuf::from("/Applications/Demo.app/Icon.png")),
+        app_name: "Demo".to_owned(),
+      },
+    };
+    let json = app_entry_json(&entry);
+    let doc = JsonDocument::parse(&json).unwrap();
+    assert_eq!(
+      doc.str_field("bundle_id").unwrap().as_deref(),
+      Some("com.tontoo.demo")
+    );
+    assert_eq!(
+      doc.str_field("source").unwrap().as_deref(),
+      Some("system")
+    );
+    let names = doc.string_map_field("names").unwrap();
+    assert_eq!(names.get("en_us").map(String::as_str), Some("Demo"));
+    let icon = doc.nested("icon").unwrap().expect("icon object");
+    assert_eq!(
+      icon.str_field("icon_path").unwrap().as_deref(),
+      Some("/Applications/Demo.app/Icon.png")
+    );
   }
 }

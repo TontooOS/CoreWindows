@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 const EN_US: &str = include_str!("../lang/en_us.json");
 const DE_DE: &str = include_str!("../lang/de_de.json");
 
-static MESSAGES: OnceLock<serde_json::Value> = OnceLock::new();
+static MESSAGES: OnceLock<HashMap<String, String>> = OnceLock::new();
 
 pub fn current_locale() -> &'static str {
   let lang = std::env::var("LC_ALL")
@@ -18,21 +19,18 @@ pub fn current_locale() -> &'static str {
   }
 }
 
-fn messages() -> &'static serde_json::Value {
+fn messages() -> &'static HashMap<String, String> {
   MESSAGES.get_or_init(|| {
     let raw = match current_locale() {
       "de_de" => DE_DE,
       _ => EN_US,
     };
-    serde_json::from_str(raw).expect("built-in language file is invalid")
+    foundation::serialization::JSONSerialization::parse_flat_string_map(raw)
+      .expect("built-in language file is invalid")
   })
 }
 
 /// Translate `key`, falls back to the key itself when missing.
 pub fn t(key: &str) -> String {
-  messages()
-    .get(key)
-    .and_then(|v| v.as_str())
-    .unwrap_or(key)
-    .to_string()
+  messages().get(key).cloned().unwrap_or_else(|| key.to_string())
 }

@@ -1,20 +1,19 @@
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use foundation::serialization::JsonDocument;
 
 /// Resolved app icon for a TontooOS `.app` bundle.
 ///
 /// The icon file is located through the `icon` field of the bundle
 /// `Info.tontoo` (relative to the bundle root). Rendering the file is left
 /// to the caller (e.g. via CoreIcon); this struct only carries paths.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppIcon {
   /// Bundle id from `Info.tontoo` (`bundle_id`).
   pub bundle_id: String,
   /// Absolute bundle directory (`....app`).
   pub bundle_path: PathBuf,
   /// Absolute icon file, when the `icon` field resolves to an existing file.
-  #[serde(default)]
   pub icon_path: Option<PathBuf>,
   /// Display name of the app.
   pub app_name: String,
@@ -43,7 +42,7 @@ pub fn resolve_icon(
   bundle_dir: &Path,
   bundle_id: &str,
   app_name: &str,
-  info: Option<&serde_json::Value>,
+  info: Option<&JsonDocument>,
 ) -> AppIcon {
   let mut icon_path: Option<PathBuf> = None;
 
@@ -71,15 +70,15 @@ pub fn resolve_icon(
   }
 }
 
-pub(crate) fn icon_field(info: &serde_json::Value) -> Option<String> {
-  let icon = info.get("icon")?;
-  if let Some(path) = icon.as_str() {
-    return Some(path.to_owned());
+pub(crate) fn icon_field(info: &JsonDocument) -> Option<String> {
+  if let Some(path) = info.str_field("icon").unwrap_or(None) {
+    return Some(path);
   }
-  icon
-    .get("path")
-    .and_then(|v| v.as_str())
-    .map(str::to_owned)
+  info
+    .nested("icon")
+    .unwrap_or(None)?
+    .str_field("path")
+    .unwrap_or(None)
 }
 
 #[cfg(test)]
@@ -95,8 +94,7 @@ mod tests {
       .unwrap()
       .write_all(b"png")
       .unwrap();
-    let info: serde_json::Value =
-      serde_json::from_str(r#"{"icon":"MyIcon.png"}"#).unwrap();
+    let info = JsonDocument::parse(r#"{"icon":"MyIcon.png"}"#).unwrap();
     let resolved = resolve_icon(dir.path(), "com.tontoo.demo", "Demo", Some(&info));
     assert_eq!(resolved.icon_path.as_deref(), Some(icon.as_path()));
   }
@@ -110,8 +108,7 @@ mod tests {
       .unwrap()
       .write_all(b"png")
       .unwrap();
-    let info: serde_json::Value =
-      serde_json::from_str(r#"{"icon":{"path":"Resources/Icon.png"}}"#).unwrap();
+    let info = JsonDocument::parse(r#"{"icon":{"path":"Resources/Icon.png"}}"#).unwrap();
     let resolved = resolve_icon(dir.path(), "com.tontoo.demo", "Demo", Some(&info));
     assert_eq!(resolved.icon_path.as_deref(), Some(icon.as_path()));
   }

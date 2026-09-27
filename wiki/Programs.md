@@ -85,7 +85,7 @@ empty drops the user entry.
 ### all_names
 
 ```rust
-pub fn all_names(info: &serde_json::Value) -> HashMap<String, String>
+  pub fn all_names(info: &JsonDocument) -> HashMap<String, String>
 ```
 
 Every known name of a parsed `Info.tontoo`: the full `name` locale

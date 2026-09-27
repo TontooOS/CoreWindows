@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use foundation::serialization::JsonDocument;
 
 use crate::classify::localized_name;
 use crate::icon::{icon_field, resolve_icon, AppIcon};
@@ -14,8 +14,7 @@ pub const SYSTEM_APPLICATIONS_DIR: &str = "/Applications";
 pub const USER_APPLICATIONS_DIR: &str = "Applications";
 
 /// Where an app bundle was found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppSource {
   /// `~/Applications` – installed by the user.
   User,
@@ -31,6 +30,15 @@ impl AppSource {
       Self::System => "System",
     }
   }
+
+  /// Snake-case wire spelling (`user`, `system`), matching the previous
+  /// serde `rename_all` output.
+  pub fn snake_str(self) -> &'static str {
+    match self {
+      Self::User => "user",
+      Self::System => "system",
+    }
+  }
 }
 
 impl std::fmt::Display for AppSource {
@@ -40,7 +48,7 @@ impl std::fmt::Display for AppSource {
 }
 
 /// One installed TontooOS application (`.app` bundle).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppEntry {
   /// Bundle id from `Info.tontoo` (`bundle_id`).
   pub bundle_id: String,
@@ -134,10 +142,10 @@ fn read_app(bundle: &Path, source: AppSource) -> Option<AppEntry> {
 
 fn read_dir_bundle(bundle_dir: &Path, source: AppSource) -> Option<AppEntry> {
   let info_text = std::fs::read_to_string(bundle_dir.join("Info.tontoo")).ok()?;
-  let info: serde_json::Value = serde_json::from_str(&info_text).ok()?;
+  let info = JsonDocument::parse(&info_text).ok()?;
   let bundle_id = info
-    .get("bundle_id")
-    .and_then(|v| v.as_str())
+    .str_field("bundle_id")
+    .unwrap_or(None)
     .filter(|s| !s.is_empty())?;
   let names = all_names(&info);
   let display_name = localized_name(&info).or_else(|| {
@@ -146,9 +154,9 @@ fn read_dir_bundle(bundle_dir: &Path, source: AppSource) -> Option<AppEntry> {
       .and_then(|s| s.to_str())
       .map(str::to_owned)
   })?;
-  let icon = resolve_icon(bundle_dir, bundle_id, &display_name, Some(&info));
+  let icon = resolve_icon(bundle_dir, &bundle_id, &display_name, Some(&info));
   Some(AppEntry {
-    bundle_id: bundle_id.to_owned(),
+    bundle_id,
     names,
     display_name,
     bundle_path: bundle_dir.to_owned(),
@@ -182,10 +190,10 @@ fn read_zip_bundle(zip_path: &Path, source: AppSource) -> Option<AppEntry> {
     .ok()?
     .read_to_string(&mut info_text)
     .ok()?;
-  let info: serde_json::Value = serde_json::from_str(&info_text).ok()?;
+  let info = JsonDocument::parse(&info_text).ok()?;
   let bundle_id = info
-    .get("bundle_id")
-    .and_then(|v| v.as_str())
+    .str_field("bundle_id")
+    .unwrap_or(None)
     .filter(|s| !s.is_empty())?;
   let names = all_names(&info);
   let display_name = localized_name(&info).or_else(|| {
@@ -194,9 +202,9 @@ fn read_zip_bundle(zip_path: &Path, source: AppSource) -> Option<AppEntry> {
       .and_then(|s| s.to_str())
       .map(str::to_owned)
   })?;
-  let icon = resolve_zip_icon(&mut archive, prefix, zip_path, bundle_id, &display_name, &info);
+  let icon = resolve_zip_icon(&mut archive, prefix, zip_path, &bundle_id, &display_name, &info);
   Some(AppEntry {
-    bundle_id: bundle_id.to_owned(),
+    bundle_id,
     names,
     display_name,
     bundle_path: zip_path.to_owned(),
@@ -214,7 +222,7 @@ fn resolve_zip_icon(
   zip_path: &Path,
   bundle_id: &str,
   app_name: &str,
-  info: &serde_json::Value,
+  info: &JsonDocument,
 ) -> AppIcon {
   let mut candidates = Vec::new();
   if let Some(rel) = icon_field(info) {
@@ -302,24 +310,13 @@ fn zip_newer_than(zip_path: &Path, cached: &Path) -> bool {
 /// Every known name of a bundle: the full `name` locale map, or a single
 /// `"default"` entry for a plain string `name`. Empty when `name` is
 /// missing or unusable.
-pub fn all_names(info: &serde_json::Value) -> HashMap<String, String> {
-  let mut names = HashMap::new();
-  match info.get("name") {
-    Some(value) if value.is_string() => {
-      if let Some(text) = value.as_str() {
-        names.insert("default".to_owned(), text.to_owned());
-      }
-    }
-    Some(value) if value.is_object() => {
-      for (locale, text) in value.as_object().expect("checked is_object") {
-        if let Some(text) = text.as_str() {
-          names.insert(locale.clone(), text.to_owned());
-        }
-      }
-    }
-    _ => {}
+pub fn all_names(info: &JsonDocument) -> HashMap<String, String> {
+  if let Some(text) = info.str_field("name").unwrap_or(None) {
+    let mut names = HashMap::with_capacity(1);
+    names.insert("default".to_owned(), text);
+    return names;
   }
-  names
+  info.string_map_field("name").unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -369,7 +366,7 @@ mod tests {
 
   #[test]
   fn plain_string_name_becomes_default() {
-    let info: serde_json::Value = serde_json::from_str(r#"{"name":"Terminal"}"#).unwrap();
+    let info = JsonDocument::parse(r#"{"name":"Terminal"}"#).unwrap();
     let names = all_names(&info);
     assert_eq!(names.len(), 1);
     assert_eq!(names.get("default").map(String::as_str), Some("Terminal"));
@@ -377,7 +374,7 @@ mod tests {
 
   #[test]
   fn missing_name_is_empty() {
-    let info: serde_json::Value = serde_json::from_str(r#"{"bundle_id":"x"}"#).unwrap();
+    let info = JsonDocument::parse(r#"{"bundle_id":"x"}"#).unwrap();
     assert!(all_names(&info).is_empty());
   }
 
