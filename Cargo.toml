@@ -23,7 +23,8 @@ path = "examples/list_programs.rs"
 
 [dependencies]
 foundation = { path = "../Foundation" }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+archivekit = { path = "../ArchiveKit" }
 
 [dev-dependencies]
 tempfile = "3"
+coreicon = { path = "../CoreIcon" }

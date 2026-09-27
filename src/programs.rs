@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
+use archivekit::{AppManifest, AppReader};
 use foundation::serialization::JsonDocument;
 
 use crate::classify::localized_name;
@@ -12,6 +12,9 @@ pub const SYSTEM_APPLICATIONS_DIR: &str = "/Applications";
 
 /// Per-user applications directory name (resolved against `HOME`).
 pub const USER_APPLICATIONS_DIR: &str = "Applications";
+
+/// `Info.tontoo` file name inside bundles and containers.
+pub const INFO_FILE: &str = "Info.tontoo";
 
 /// Where an app bundle was found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +61,8 @@ pub struct AppEntry {
   /// Display name for the current locale (locale, `en_us`, first entry,
   /// then bundle dir stem fallback).
   pub display_name: String,
-  /// Absolute bundle directory (`....app`).
+  /// Absolute bundle directory (`....app`), or the container file itself
+  /// for single-file TAPP containers.
   pub bundle_path: PathBuf,
   /// Where the bundle was found.
   pub source: AppSource,
@@ -82,10 +86,11 @@ pub fn program_dirs() -> Vec<(AppSource, PathBuf)> {
 /// List all installed programs from `~/Applications` and `/Applications`.
 ///
 /// Each `*.app` entry becomes one [`AppEntry`]: directories with a readable
-/// `Info.tontoo` carrying a `bundle_id`, and zipped `.app` files (TBuild
-/// output) with an `Info.tontoo` entry carrying a `bundle_id`. Anything else
-/// (plain files, bundles without info, invalid JSON, missing `bundle_id`,
-/// non-zip `.app` files) is skipped silently. Results are sorted by display
+/// fico `Info.tontoo` carrying a `bundle_id`, and TAPP `.app` containers
+/// (TBuild output) with a manifest carrying a `bundle_id`. Only the manifest
+/// (plus the icon on demand) is read from containers. Anything else (plain
+/// files, bundles without info, invalid manifests, missing `bundle_id`,
+/// non-TAPP `.app` files) is skipped silently. Results are sorted by display
 /// name (case-insensitive).
 pub fn list_programs() -> Vec<AppEntry> {
   let mut entries = Vec::new();
@@ -101,7 +106,7 @@ pub fn list_programs() -> Vec<AppEntry> {
 }
 
 /// Scan one applications directory for `.app` bundles (directories and
-/// zipped `.app` files, see [`list_programs`]).
+/// TAPP `.app` containers, see [`list_programs`]).
 pub fn scan_dir(dir: &Path, source: AppSource) -> Vec<AppEntry> {
   let mut entries = Vec::new();
   let Ok(read_dir) = std::fs::read_dir(dir) else {
@@ -127,8 +132,9 @@ fn is_app_bundle(path: &Path) -> bool {
   {
     return false;
   }
-  // Installed bundles are directories; TBuild ships them as zipped `.app`
-  // files (opened by `tapp` without extraction). Anything else is ignored.
+  // Installed bundles are directories; TBuild ships them as single-file
+  // TAPP `.app` containers (opened by `tapp` without extraction).
+  // Anything else is ignored.
   path.is_dir() || path.is_file()
 }
 
@@ -136,17 +142,16 @@ fn read_app(bundle: &Path, source: AppSource) -> Option<AppEntry> {
   if bundle.is_dir() {
     read_dir_bundle(bundle, source)
   } else {
-    read_zip_bundle(bundle, source)
+    read_container_bundle(bundle, source)
   }
 }
 
+/// Read an installed directory bundle: `<dir>/Info.tontoo` in fico syntax.
 fn read_dir_bundle(bundle_dir: &Path, source: AppSource) -> Option<AppEntry> {
-  let info_text = std::fs::read_to_string(bundle_dir.join("Info.tontoo")).ok()?;
-  let info = JsonDocument::parse(&info_text).ok()?;
-  let bundle_id = info
-    .str_field("bundle_id")
-    .unwrap_or(None)
-    .filter(|s| !s.is_empty())?;
+  let text = std::fs::read_to_string(bundle_dir.join(INFO_FILE)).ok()?;
+  let manifest = AppManifest::from_fico(&text).ok()?;
+  let info = manifest_to_json(&manifest)?;
+  let bundle_id = manifest.bundle_id.clone();
   let names = all_names(&info);
   let display_name = localized_name(&info).or_else(|| {
     bundle_dir
@@ -165,65 +170,49 @@ fn read_dir_bundle(bundle_dir: &Path, source: AppSource) -> Option<AppEntry> {
   })
 }
 
-/// Read a zipped `.app` file (TBuild output): the `Info.tontoo` entry may sit
-/// at the archive root or under a single top-level `<Name>.app/` directory.
-/// `bundle_path` points at the `.app` file itself, which `tapp` opens without
-/// prior extraction, so launching works unchanged.
-fn read_zip_bundle(zip_path: &Path, source: AppSource) -> Option<AppEntry> {
-  let file = std::fs::File::open(zip_path).ok()?;
-  let mut archive = zip::ZipArchive::new(file).ok()?;
-  let info_name = (0..archive.len())
-    .filter_map(|i| {
-      archive
-        .by_index(i)
-        .ok()
-        .map(|entry| entry.name().to_owned())
-    })
-    .find(|name| name == "Info.tontoo" || name.ends_with("/Info.tontoo"))?;
-  let prefix = info_name
-    .rsplit_once("Info.tontoo")
-    .map(|(prefix, _)| prefix)
-    .unwrap_or("");
-  let mut info_text = String::new();
-  archive
-    .by_name(&info_name)
-    .ok()?
-    .read_to_string(&mut info_text)
-    .ok()?;
-  let info = JsonDocument::parse(&info_text).ok()?;
-  let bundle_id = info
-    .str_field("bundle_id")
-    .unwrap_or(None)
-    .filter(|s| !s.is_empty())?;
+/// Read a TAPP `.app` container (TBuild output) by index: only the footer,
+/// the central directory, the manifest and (on demand) the icon entry are
+/// touched. `bundle_path` points at the `.app` file itself, which `tapp`
+/// opens without prior extraction, so launching works unchanged.
+fn read_container_bundle(container: &Path, source: AppSource) -> Option<AppEntry> {
+  let mut reader = AppReader::open(container).ok()?;
+  let manifest = reader.read_manifest().ok()?;
+  let info = manifest_to_json(&manifest)?;
+  let bundle_id = manifest.bundle_id.clone();
   let names = all_names(&info);
   let display_name = localized_name(&info).or_else(|| {
-    zip_path
+    container
       .file_stem()
       .and_then(|s| s.to_str())
       .map(str::to_owned)
   })?;
-  let icon = resolve_zip_icon(&mut archive, prefix, zip_path, &bundle_id, &display_name, &info);
+  let icon = resolve_container_icon(&mut reader, container, &bundle_id, &display_name, &info);
   Some(AppEntry {
     bundle_id,
     names,
     display_name,
-    bundle_path: zip_path.to_owned(),
+    bundle_path: container.to_owned(),
     source,
     icon,
   })
 }
 
-/// Resolve the icon of a zipped bundle: the `icon` field first, then
-/// [`crate::icon::ICON_PROBE_FILES`], extracted once into the temp icon
-/// cache. `icon_path` is `None` when the archive holds no usable file.
-fn resolve_zip_icon(
-  archive: &mut zip::ZipArchive<std::fs::File>,
-  prefix: &str,
-  zip_path: &Path,
+/// Resolve the icon of a TAPP container: the manifest `icon` entry first,
+/// then [`crate::icon::ICON_PROBE_FILES`] under the container top prefix,
+/// read selectively and extracted once into the temp icon cache.
+/// `icon_path` is `None` when the container holds no usable file.
+fn resolve_container_icon(
+  reader: &mut AppReader<std::fs::File>,
+  container: &Path,
   bundle_id: &str,
   app_name: &str,
   info: &JsonDocument,
 ) -> AppIcon {
+  let top = reader
+    .manifest_name()
+    .and_then(|entry| entry.strip_suffix(INFO_FILE))
+    .unwrap_or("")
+    .to_string();
   let mut candidates = Vec::new();
   if let Some(rel) = icon_field(info) {
     candidates.push(rel);
@@ -233,17 +222,14 @@ fn resolve_zip_icon(
       .iter()
       .map(|s| s.to_string()),
   );
-  let bundle_path = zip_path.to_owned();
+  let bundle_path = container.to_owned();
   for rel in candidates {
-    let in_zip = format!("{prefix}{rel}");
-    let present = archive
-      .by_name(&in_zip)
-      .map(|entry| entry.is_file())
-      .unwrap_or(false);
+    let full = format!("{top}{rel}");
+    let present = reader.find(&full).is_some_and(|meta| !meta.is_dir());
     if !present {
       continue;
     }
-    if let Some(out) = extract_zip_icon(archive, &in_zip, prefix, zip_path, bundle_id) {
+    if let Some(out) = extract_container_icon(reader, &full, &rel, container, bundle_id) {
       return AppIcon {
         bundle_id: bundle_id.to_owned(),
         bundle_path,
@@ -260,14 +246,36 @@ fn resolve_zip_icon(
   }
 }
 
-/// Extract one icon entry into the temp icon cache
+/// Resolve the icon of a container for window enrichment (see
+/// [`crate::provider`]): opens the container, reads the manifest and
+/// extracts the icon into the temp icon cache. Used when a running app was
+/// launched from a single-file container (`TONTOO_APP_CONTAINER`) instead
+/// of a directory bundle.
+pub(crate) fn container_icon_cached(
+  container: &Path,
+  bundle_id: &str,
+  app_name: &str,
+) -> Option<AppIcon> {
+  let mut reader = AppReader::open(container).ok()?;
+  let manifest = reader.read_manifest().ok()?;
+  let info = manifest_to_json(&manifest)?;
+  Some(resolve_container_icon(
+    &mut reader,
+    container,
+    bundle_id,
+    app_name,
+    &info,
+  ))
+}
+
+/// Extract one container entry into the temp icon cache
 /// (`$TMPDIR/tontoo-corewindows-icons/<bundle-id>/<path>`). Cached files are
-/// reused; a bundle newer than its cache is extracted again.
-fn extract_zip_icon(
-  archive: &mut zip::ZipArchive<std::fs::File>,
-  in_zip: &str,
-  prefix: &str,
-  zip_path: &Path,
+/// reused; a container newer than its cache is extracted again.
+fn extract_container_icon(
+  reader: &mut AppReader<std::fs::File>,
+  full: &str,
+  rel: &str,
+  container: &Path,
   bundle_id: &str,
 ) -> Option<PathBuf> {
   let safe_id: String = bundle_id
@@ -280,31 +288,74 @@ fn extract_zip_icon(
       }
     })
     .collect();
-  let rel = in_zip.strip_prefix(prefix).unwrap_or(in_zip);
   let out = std::env::temp_dir()
     .join("tontoo-corewindows-icons")
     .join(safe_id)
     .join(rel);
-  if out.is_file() && !zip_newer_than(zip_path, &out) {
+  if out.is_file() && !container_newer_than(container, &out) {
     return Some(out);
   }
   let parent = out.parent()?;
   std::fs::create_dir_all(parent).ok()?;
-  let mut entry = archive.by_name(in_zip).ok()?;
-  let mut out_file = std::fs::File::create(&out).ok()?;
-  std::io::copy(&mut entry, &mut out_file).ok()?;
+  let bytes = reader.read_file(full).ok()?;
+  std::fs::write(&out, &bytes).ok()?;
   Some(out)
 }
 
-/// Whether the `.app` file was modified after its cached icon extract.
-fn zip_newer_than(zip_path: &Path, cached: &Path) -> bool {
+/// Whether the `.app` container was modified after its cached icon extract.
+fn container_newer_than(container: &Path, cached: &Path) -> bool {
   match (
-    std::fs::metadata(zip_path).and_then(|m| m.modified()),
+    std::fs::metadata(container).and_then(|m| m.modified()),
     std::fs::metadata(cached).and_then(|m| m.modified()),
   ) {
-    (Ok(zip_time), Ok(cache_time)) => zip_time > cache_time,
+    (Ok(container_time), Ok(cache_time)) => container_time > cache_time,
     _ => true,
   }
+}
+
+/// Minimal JSON string escaping for [`manifest_to_json`].
+fn json_escape(raw: &str) -> String {
+  let mut out = String::with_capacity(raw.len() + 2);
+  for c in raw.chars() {
+    match c {
+      '"' => out.push_str("\\\""),
+      '\\' => out.push_str("\\\\"),
+      '\n' => out.push_str("\\n"),
+      '\r' => out.push_str("\\r"),
+      '\t' => out.push_str("\\t"),
+      c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+      c => out.push(c),
+    }
+  }
+  out
+}
+
+/// Convert a fico [`AppManifest`] into the JSON document the name, icon and
+/// classification helpers work on (`bundle_id`, `version`, `name` map,
+/// optional `icon`). Keeps those helpers (and the FFI) format-agnostic.
+pub(crate) fn manifest_to_json(manifest: &AppManifest) -> Option<JsonDocument> {
+  let mut names = String::new();
+  for (index, (locale, name)) in manifest.names.iter().enumerate() {
+    if index > 0 {
+      names.push(',');
+    }
+    names.push_str(&format!(
+      "\"{}\":\"{}\"",
+      json_escape(locale),
+      json_escape(name)
+    ));
+  }
+  let mut doc = format!(
+    "{{\"bundle_id\":\"{}\",\"version\":\"{}\",\"name\":{{{}}}}}",
+    json_escape(&manifest.bundle_id),
+    json_escape(&manifest.version),
+    names
+  );
+  if let Some(icon) = &manifest.icon {
+    doc.pop();
+    doc.push_str(&format!(",\"icon\":\"{}\"}}", json_escape(icon)));
+  }
+  JsonDocument::parse(&doc).ok()
 }
 
 /// Every known name of a bundle: the full `name` locale map, or a single
@@ -322,35 +373,40 @@ pub fn all_names(info: &JsonDocument) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use archivekit::{AppBuilder, AppManifest};
   use std::io::Write as _;
 
   fn write_bundle(dir: &Path, name: &str, info: &str, icon: bool) -> PathBuf {
     let bundle = dir.join(name);
     std::fs::create_dir_all(&bundle).unwrap();
-    std::fs::File::create(bundle.join("Info.tontoo"))
+    std::fs::File::create(bundle.join(INFO_FILE))
       .unwrap()
       .write_all(info.as_bytes())
       .unwrap();
     if icon {
-      std::fs::File::create(bundle.join("Icon.png"))
+      let icon_path = bundle.join("App").join("icon.tico");
+      std::fs::create_dir_all(icon_path.parent().unwrap()).unwrap();
+      std::fs::File::create(&icon_path)
         .unwrap()
-        .write_all(b"png")
+        .write_all(b"tico")
         .unwrap();
     }
     bundle
   }
 
+  const FINDER_INFO: &str = "app {\n  bundle_id: com.tontoo.finder\n  version: \"1.0\"\n  executable: App/finder\n  icon: App/icon.tico\n  name {\n    en_us: \"Finder\"\n    de_de: \"FinderDE\"\n  }\n}\n";
+
   #[test]
   fn scan_dir_reads_names_and_icon() {
     let root = tempfile::tempdir().unwrap();
+    write_bundle(root.path(), "Finder.app", FINDER_INFO, true);
+    write_bundle(root.path(), "Broken.app", "not fico {{{", false);
     write_bundle(
       root.path(),
-      "Finder.app",
-      r#"{"bundle_id":"com.tontoo.finder","name":{"en_us":"Finder","de_de":"FinderDE"},"icon":"Icon.png"}"#,
-      true,
+      "NoId.app",
+      "app {\n  version: \"1.0\"\n  executable: App/noid\n}\n",
+      false,
     );
-    write_bundle(root.path(), "Broken.app", "not json", false);
-    write_bundle(root.path(), "NoId.app", r#"{"name":"NoId"}"#, false);
     std::fs::create_dir_all(root.path().join("Not.flat")).unwrap();
 
     let mut entries = scan_dir(root.path(), AppSource::User);
@@ -395,7 +451,7 @@ mod tests {
     write_bundle(
       &apps,
       "Notes.app",
-      r#"{"bundle_id":"com.tontoo.notes","name":"Notes"}"#,
+      "app {\n  bundle_id: com.tontoo.notes\n  version: \"1.0\"\n  executable: App/notes\n  name {\n    en_us: \"Notes\"\n  }\n}\n",
       false,
     );
     let old_home = std::env::var("HOME").ok();
@@ -413,55 +469,66 @@ mod tests {
     assert_eq!(notes[0].display_name, "Notes");
   }
 
-  fn write_zip(dir: &Path, name: &str, files: &[(&str, &[u8])]) -> PathBuf {
-    let path = dir.join(name);
-    let file = std::fs::File::create(&path).unwrap();
-    let mut zip = zip::ZipWriter::new(file);
-    for (entry, data) in files {
-      zip
-        .start_file(*entry, zip::write::SimpleFileOptions::default())
-        .unwrap();
-      zip.write_all(data).unwrap();
+  /// Valid `.tico` bytes via CoreIcon (dev-dependency), so container
+  /// fixtures always pass structural validation.
+  fn test_tico() -> Vec<u8> {
+    use coreicon::generator::{Background, IconCanvas, Layer, LayerContent};
+    use coreicon::{tico::Tico, Color};
+    let canvas = IconCanvas::new()
+      .background(Background::color(Color::BLACK))
+      .layer(Layer::new(LayerContent::circle(512.0)))
+      .glass();
+    let path = std::env::temp_dir().join("corewindows-test-icon.tico");
+    Tico::export(&canvas, "t", &path).expect("tico export");
+    std::fs::read(&path).expect("read tico")
+  }
+
+  fn write_container(dir: &Path, name: &str, with_icon: bool) -> PathBuf {
+    let path = dir.join(format!("{name}.app"));
+    let mut manifest = AppManifest::new(
+      format!("com.tontoo.{}", name.to_lowercase()),
+      "2.0",
+      format!("App/{name}"),
+    );
+    if with_icon {
+      manifest.icon = Some("App/icon.tico".to_string());
     }
-    zip.finish().unwrap();
+    manifest
+      .names
+      .push(("en_us".to_string(), name.to_string()));
+    let mut builder = AppBuilder::new(name).expect("builder");
+    builder.set_manifest(manifest);
+    builder
+      .add_executable(&format!("App/{name}"), b"binary".to_vec())
+      .unwrap();
+    if with_icon {
+      builder.add_icon_tico("App/icon.tico", test_tico()).unwrap();
+    }
+    builder.write_to_file(&path).expect("write container");
     path
   }
 
   #[test]
-  fn scan_dir_lists_zipped_app_with_icon() {
+  fn scan_dir_lists_container_app_with_icon() {
     let root = tempfile::tempdir().unwrap();
-    let zip_path = write_zip(
-      root.path(),
-      "Demo.app",
-      &[
-        (
-          "Demo.app/Info.tontoo",
-          br#"{"bundle_id":"com.tontoo.demo","name":{"en_us":"Demo","de_de":"DemoDE"}}"#,
-        ),
-        ("Demo.app/Resources/icon.png", b"png"),
-      ],
-    );
+    let container = write_container(root.path(), "Demo", true);
 
     let entries = scan_dir(root.path(), AppSource::System);
     assert_eq!(entries.len(), 1);
     let app = &entries[0];
     assert_eq!(app.bundle_id, "com.tontoo.demo");
-    assert!(app.display_name == "Demo" || app.display_name == "DemoDE");
-    assert_eq!(app.bundle_path, zip_path);
+    assert_eq!(app.display_name, "Demo");
+    assert_eq!(app.bundle_path, container);
     assert_eq!(app.source, AppSource::System);
-    let icon = app.icon.icon_path.as_deref().expect("zip icon extracted");
+    let icon = app.icon.icon_path.as_deref().expect("icon extracted");
     assert!(icon.is_file());
-    assert_eq!(std::fs::read(icon).unwrap(), b"png");
+    assert_eq!(std::fs::read(icon).unwrap(), test_tico());
   }
 
   #[test]
-  fn scan_dir_lists_flat_zip_without_icon() {
+  fn scan_dir_lists_container_without_icon() {
     let root = tempfile::tempdir().unwrap();
-    write_zip(
-      root.path(),
-      "Flat.app",
-      &[("Info.tontoo", br#"{"bundle_id":"com.tontoo.flat","name":"Flat"}"#)],
-    );
+    write_container(root.path(), "Flat", false);
 
     let entries = scan_dir(root.path(), AppSource::System);
     assert_eq!(entries.len(), 1);
@@ -472,15 +539,33 @@ mod tests {
   #[test]
   fn scan_dir_skips_broken_app_files() {
     let root = tempfile::tempdir().unwrap();
-    write_zip(root.path(), "NoInfo.app", &[("readme.txt", b"hi")]);
-    write_zip(
+    std::fs::write(root.path().join("NoInfo.app"), b"not a container").unwrap();
+    write_bundle(
       root.path(),
       "NoId.app",
-      &[("NoId.app/Info.tontoo", br#"{"name":"NoId"}"#)],
+      "app {\n  version: \"1.0\"\n  executable: App/noid\n}\n",
+      false,
     );
-    std::fs::write(root.path().join("Binary.app"), b"not a zip").unwrap();
     std::fs::write(root.path().join("notes.txt"), b"plain").unwrap();
 
     assert!(scan_dir(root.path(), AppSource::System).is_empty());
+  }
+
+  #[test]
+  fn manifest_converts_to_json() {
+    let mut manifest = AppManifest::new("com.tontoo.x", "3.0", "App/x");
+    manifest.icon = Some("App/icon.tico".to_string());
+    manifest.names.push(("en_us".to_string(), "X\"Y".to_string()));
+    let info = manifest_to_json(&manifest).expect("converts");
+    assert_eq!(
+      info.str_field("bundle_id").unwrap(),
+      Some("com.tontoo.x".to_string())
+    );
+    let names = all_names(&info);
+    assert_eq!(names.get("en_us").map(String::as_str), Some("X\"Y"));
+    assert_eq!(
+      crate::icon::icon_field(&info),
+      Some("App/icon.tico".to_string())
+    );
   }
 }

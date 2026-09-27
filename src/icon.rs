@@ -21,14 +21,12 @@ pub struct AppIcon {
 
 /// Fallback icon file names probed inside the bundle when `Info.tontoo`
 /// carries no usable `icon` field (relative to the bundle root).
+/// TAPP containers only carry `.tico` icons (see [`crate::programs`]).
 pub const ICON_PROBE_FILES: &[&str] = &[
-  "Icon.png",
-  "icon.png",
-  "Icon.jpg",
-  "icon.jpg",
-  "Resources/Icon.png",
-  "Resources/icon.png",
-  "Contents/Resources/Icon.png",
+  "App/icon.tico",
+  "Resources/icon.tico",
+  "Icon.tico",
+  "icon.tico",
 ];
 
 /// Resolve the app icon for a bundle directory.
@@ -89,12 +87,12 @@ mod tests {
   #[test]
   fn icon_string_field_resolves() {
     let dir = tempfile::tempdir().unwrap();
-    let icon = dir.path().join("MyIcon.png");
+    let icon = dir.path().join("MyIcon.tico");
     std::fs::File::create(&icon)
       .unwrap()
-      .write_all(b"png")
+      .write_all(b"tico")
       .unwrap();
-    let info = JsonDocument::parse(r#"{"icon":"MyIcon.png"}"#).unwrap();
+    let info = JsonDocument::parse(r#"{"icon":"MyIcon.tico"}"#).unwrap();
     let resolved = resolve_icon(dir.path(), "com.tontoo.demo", "Demo", Some(&info));
     assert_eq!(resolved.icon_path.as_deref(), Some(icon.as_path()));
   }
@@ -102,13 +100,13 @@ mod tests {
   #[test]
   fn icon_object_field_resolves() {
     let dir = tempfile::tempdir().unwrap();
-    let icon = dir.path().join("Resources").join("Icon.png");
+    let icon = dir.path().join("Resources").join("Icon.tico");
     std::fs::create_dir_all(icon.parent().unwrap()).unwrap();
     std::fs::File::create(&icon)
       .unwrap()
-      .write_all(b"png")
+      .write_all(b"tico")
       .unwrap();
-    let info = JsonDocument::parse(r#"{"icon":{"path":"Resources/Icon.png"}}"#).unwrap();
+    let info = JsonDocument::parse(r#"{"icon":{"path":"Resources/Icon.tico"}}"#).unwrap();
     let resolved = resolve_icon(dir.path(), "com.tontoo.demo", "Demo", Some(&info));
     assert_eq!(resolved.icon_path.as_deref(), Some(icon.as_path()));
   }
@@ -116,10 +114,11 @@ mod tests {
   #[test]
   fn icon_probe_fallback() {
     let dir = tempfile::tempdir().unwrap();
-    let icon = dir.path().join("Icon.png");
+    let icon = dir.path().join("App").join("icon.tico");
+    std::fs::create_dir_all(icon.parent().unwrap()).unwrap();
     std::fs::File::create(&icon)
       .unwrap()
-      .write_all(b"png")
+      .write_all(b"tico")
       .unwrap();
     let resolved = resolve_icon(dir.path(), "com.tontoo.demo", "Demo", None);
     assert_eq!(resolved.icon_path.as_deref(), Some(icon.as_path()));

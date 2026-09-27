@@ -57,6 +57,9 @@ See [Windows.md](Windows.md) and [Types.md](Types.md) for details.
 
 ## Changelog
 
+- 2026-09-27: TAPP containers via ArchiveKit (fico manifest, selective
+  manifest+icon reads, `.tico` icon probes, `TONTOO_APP_CONTAINER` process
+  matching for container launches); `zip` dependency removed.
 - 2026-09-10: Window restore (`restore_window` on provider, crate root,
   FFI and SDK) plus `minimized` flag on `RawWindow`/`WindowInfo` and
   daemon rows.

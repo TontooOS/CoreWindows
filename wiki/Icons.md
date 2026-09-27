@@ -14,14 +14,16 @@ The `icon` field accepts two shapes (both relative to the bundle root):
 ```
 
 When the field is missing or points at a non-existent file, these
-candidates are probed in order (`ICON_PROBE_FILES`):
+candidates are probed in order (`ICON_PROBE_FILES`, `.tico` only):
 
 | Candidate | Note |
 |---|---|
-| `Icon.png` / `icon.png` | Bundle root |
-| `Icon.jpg` / `icon.jpg` | Bundle root |
-| `Resources/Icon.png` / `Resources/icon.png` | Resources dir |
-| `Contents/Resources/Icon.png` | macOS-style layout |
+| `App/icon.tico` | TAPP app dir |
+| `Resources/icon.tico` | Resources dir |
+| `Icon.tico` / `icon.tico` | Bundle root |
+
+Container icons resolve the same way under the `<Name>.app/` top prefix
+and are extracted into the temp icon cache (see [Programs.md](Programs.md)).
 
 ## AppIcon
 

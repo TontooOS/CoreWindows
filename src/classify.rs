@@ -173,15 +173,39 @@ pub fn toolkit_of_pid(pid: i32) -> Option<WindowType> {
     .and_then(normalize_toolkit)
 }
 
-/// Owning `.app` bundle of a process: nearest ancestor directory ending in
+/// Container file a process was launched from (`TONTOO_APP_CONTAINER` in
+/// `/proc/<pid>/environ`, set by FishRunner for single-file `.app`
+/// containers). The binary itself lives in a temp staging dir then, so no
+/// `.app` ancestor exists on disk.
+fn container_of_pid(pid: i32) -> Option<PathBuf> {
+  let raw = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+  const PREFIX: &str = "TONTOO_APP_CONTAINER=";
+  raw
+    .split(|b| *b == 0)
+    .filter_map(|entry| std::str::from_utf8(entry).ok())
+    .find_map(|entry| entry.strip_prefix(PREFIX))
+    .map(PathBuf::from)
+    .filter(|p| p.is_file())
+}
+
+/// Owning `.app` bundle of a process: the `TONTOO_APP_CONTAINER` file for
+/// container launches, else the nearest ancestor directory ending in
 /// `.app` (or the binary itself when named `*.app`), plus its parsed
-/// `Info.tontoo`. Returns `None` for plain binaries and unreadable info.
+/// `Info.tontoo` (fico). Returns `None` for plain binaries and unreadable
+/// info. The returned path is a container file for container launches.
 pub fn bundle_of_pid(pid: i32) -> Option<(PathBuf, JsonDocument)> {
+  if let Some(container) = container_of_pid(pid) {
+    let mut reader = archivekit::AppReader::open(&container).ok()?;
+    let manifest = reader.read_manifest().ok()?;
+    let info = crate::programs::manifest_to_json(&manifest)?;
+    return Some((container, info));
+  }
   let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
   let exe_path = exe.canonicalize().ok()?;
   let bundle_dir = find_bundle_dir(&exe_path)?;
   let info_text = std::fs::read_to_string(bundle_dir.join("Info.tontoo")).ok()?;
-  let info = JsonDocument::parse(&info_text).ok()?;
+  let manifest = archivekit::AppManifest::from_fico(&info_text).ok()?;
+  let info = crate::programs::manifest_to_json(&manifest)?;
   Some((bundle_dir, info))
 }
 

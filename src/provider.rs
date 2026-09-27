@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::classify::classify;
 use crate::error::{Result, WindowsError};
 use crate::icon::resolve_icon;
+use crate::programs::container_icon_cached;
 use crate::types::{RawWindow, WindowInfo};
 use foundation::serialization::{JsonDocument, JsonObject};
 
@@ -95,7 +96,13 @@ impl WindowsProvider {
         .iter()
         .map(|raw| {
           let c = classify(raw);
+          // Container launches report the `.app` file itself as the
+          // bundle path; its icon resolves through the container cache
+          // instead of the directory resolver.
           let icon = match (&c.bundle_dir, &c.bundle_id, &c.app_name) {
+            (Some(dir), Some(bundle_id), Some(app_name)) if dir.is_file() => {
+              container_icon_cached(dir, bundle_id, app_name)
+            }
             (Some(dir), Some(bundle_id), Some(app_name)) => Some(resolve_icon(
               dir,
               bundle_id,
