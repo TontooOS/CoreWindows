@@ -13,7 +13,7 @@ extern "C" {
 
 #include <stdint.h>
 
-#define TONTOO_COREWINDOWS_VERSION "26.1.0"
+#define TONTOO_COREWINDOWS_VERSION "27.0.0"
 #define TONTOO_COREWINDOWS_DEFAULT_SOCKET "/run/tontoo-windows.sock"
 
 /* Framework version as a static string (do not free). */

@@ -15,7 +15,7 @@ Framework version as a static string. Do not free the pointer.
 
 | Return | Meaning |
 |---|---|
-| non-null | Version string, e.g. `"26.1.0"` |
+| non-null | Version string, e.g. `"27.0.0"` |
 
 ### tontoo_corewindows_ping
 

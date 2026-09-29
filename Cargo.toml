@@ -1,6 +1,6 @@
 [package]
 name = "corewindows"
-version = "26.1.0"
+version = "27.0.0"
 edition = "2021"
 license = "TCL"
 description = "CoreWindows for TontooOS - list currently open windows with toolkit type and app icons"
